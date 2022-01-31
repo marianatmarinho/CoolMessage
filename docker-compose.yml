@@ -1,0 +1,73 @@
+version: '3.4'
+
+volumes:
+  mongo_data:
+
+services:
+  rabbit:
+    image: rabbitmq:3-management
+    container_name: rabbit
+    ports:
+      - 5672:5672
+      - 15672:15672
+    hostname: rabbit
+    volumes:
+      - ~/.docker-conf/rabbitmq/data/:/var/lib/rabbitmq/
+      - ~/.docker-conf/rabbitmq/log/:/var/log/rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+  messagedb:
+    image: mongo
+    container_name: messagedb
+    restart: always
+    ports:
+      - "27017:27017" 
+    volumes:
+      - mongo_data:/data/db  
+    healthcheck:
+      test: echo 'db.stats().ok' | mongo localhost:27017/zenbrain --quiet
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    
+  coolmessage.consumer:
+    image: ${DOCKER_REGISTRY-}coolmessageconsumer
+    build:
+      context: .
+      dockerfile: src/CoolMessage.Consumer/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=https://+:443;http://+:80
+      - DatabaseSettings__ConnectionString=mongodb://messagedb:27017
+    ports:
+      - "8002:80"
+      - "4432:443"
+    volumes:
+      - ${APPDATA}/ASP.NET/Https:/root/.aspnet/https:ro
+    depends_on:
+      rabbit:
+        condition: service_healthy
+      messagedb:
+        condition: service_healthy
+
+
+  coolmessage.producer:
+    image: ${DOCKER_REGISTRY-}coolmessageproducer
+    build:
+      context: .
+      dockerfile: src/CoolMessage.Producer/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=https://+:443;http://+:80
+    ports:
+      - "8001:80"
+      - "4431:443"
+    volumes:
+      - ${APPDATA}/ASP.NET/Https:/root/.aspnet/https:ro
+    depends_on:
+      rabbit:
+        condition: service_healthy
